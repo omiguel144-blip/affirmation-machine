@@ -1,4 +1,5 @@
 import { buildMarimba, marimbaRoot, type MarimbaSettings } from "./marimba";
+import { buildPad, type PadSettings } from "./pad";
 
 export type ToneKind = "432" | "528" | "639" | "888" | "binaural" | "none";
 
@@ -9,6 +10,7 @@ export interface ToneSettings {
   beat: number;
   rain: boolean;
   marimba: MarimbaSettings;
+  pad: PadSettings;
 }
 
 /** The musical key root shared by the marimba and autotune, derived from the chosen frequency. */
@@ -68,4 +70,5 @@ export function buildTone(ctx: BaseAudioContext, dest: AudioNode, s: ToneSetting
   if (s.marimba.on) {
     buildMarimba(ctx, dest, s.marimba, keyRoot(s), t0, t1);
   }
+  if (s.pad.on) buildPad(ctx, dest, s.pad, keyRoot(s), t0, t1);
 }

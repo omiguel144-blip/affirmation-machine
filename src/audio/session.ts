@@ -1,5 +1,6 @@
 import { makeImpulse, voiceChain } from "./smooth";
 import { buildMarimba, marimbaLoopSeconds } from "./marimba";
+import { buildPad, PAD_LOOP_SEC } from "./pad";
 import { keyRoot, type ToneSettings } from "./tones";
 
 export const SR = 44100;
@@ -16,8 +17,9 @@ export interface SessionPlan {
   voiceTail: Stereo;
   /** Background ducking gain at 10 ms steps over [first | loop | tail] as rendered. */
   duck: Float32Array;
-  marimbaFirst: Stereo | null;
-  marimbaLoop: Stereo | null;
+  /** Background music (marimba or pad): first pass, then a seamless loop. */
+  musicFirst: Stereo | null;
+  musicLoop: Stereo | null;
   tone: { left: number; right: number; gain: number } | null;
   rainGain: number;
   durationSec: number;
@@ -53,20 +55,21 @@ const HOP = 441; // 10 ms ducking-envelope resolution
  * word lands on the downbeat of a bar and the pause rounds up to the next bar, so the
  * whole cycle is a whole number of bars and stays locked to the marimba for the full session.
  */
-function layout(clips: AudioBuffer[], gap: number, bar: number | null) {
+function layout(clips: AudioBuffer[], gap: number, bar: number | null, repeatAfter: boolean) {
   const starts: number[] = [];
   let t = 0;
   for (const c of clips) {
     starts.push(t);
-    const need = c.duration + gap;
+    // "repeat after me" leaves room to say the phrase back before the breath-pause
+    const need = c.duration + gap + (repeatAfter ? c.duration : 0);
     t += bar ? Math.max(1, Math.ceil((need - 1e-6) / bar)) * bar : need;
   }
   return { starts, cycle: t };
 }
 
 /** Renders two passes of the affirmation set through the voice chain and splits it into seamless pieces. */
-async function renderVoice(clips: AudioBuffer[], gap: number, reverb: number, softness: number, bar: number | null) {
-  const { starts, cycle } = layout(clips, gap, bar);
+async function renderVoice(clips: AudioBuffer[], gap: number, reverb: number, softness: number, bar: number | null, repeatAfter: boolean) {
+  const { starts, cycle } = layout(clips, gap, bar, repeatAfter);
   const C = Math.round(cycle * SR);
   const tail = Math.round(3 * SR);
   const ctx = new OfflineAudioContext(2, 2 * C + tail, SR);
@@ -128,9 +131,18 @@ async function renderMarimba(tone: ToneSettings) {
   return { first: slice(buf, 0, L), loop: slice(buf, L, 2 * L) };
 }
 
+async function renderPad(tone: ToneSettings) {
+  const L = Math.round(PAD_LOOP_SEC * SR);
+  const ctx = new OfflineAudioContext(2, 2 * L, SR);
+  buildPad(ctx, ctx.destination, tone.pad, keyRoot(tone), 0, (2 * L) / SR, false);
+  const buf = await ctx.startRendering();
+  return { first: slice(buf, 0, L), loop: slice(buf, L, 2 * L) };
+}
+
 export async function planSession(opts: {
   clips: AudioBuffer[];
   gap: number;
+  repeatAfter: boolean;
   reverb: number;
   softness: number;
   tone: ToneSettings;
@@ -138,8 +150,8 @@ export async function planSession(opts: {
   title: string;
 }): Promise<SessionPlan> {
   const bar = opts.tone.marimba.on ? (4 * 60) / opts.tone.marimba.bpm : null;
-  const voice = await renderVoice(opts.clips, opts.gap, opts.reverb, opts.softness, bar);
-  const mar = opts.tone.marimba.on ? await renderMarimba(opts.tone) : null;
+  const voice = await renderVoice(opts.clips, opts.gap, opts.reverb, opts.softness, bar, opts.repeatAfter);
+  const music = opts.tone.marimba.on ? await renderMarimba(opts.tone) : opts.tone.pad.on ? await renderPad(opts.tone) : null;
   const t = opts.tone;
   const gain = Math.pow(10, t.volumeDb / 20);
   const tone =
@@ -154,8 +166,8 @@ export async function planSession(opts: {
     voiceLoop: voice.loop,
     voiceTail: voice.tail,
     duck: voice.duck,
-    marimbaFirst: mar?.first ?? null,
-    marimbaLoop: mar?.loop ?? null,
+    musicFirst: music?.first ?? null,
+    musicLoop: music?.loop ?? null,
     tone,
     rainGain: t.rain ? gain * 0.6 : 0,
     // always fit at least one full cycle plus intro and a 10 s outro

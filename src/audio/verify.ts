@@ -46,7 +46,7 @@ export async function verify(tone: ToneSettings, out: { peak: number; limitedSam
   if (tone.kind !== "none") {
     const sr = 44100;
     const ctx = new OfflineAudioContext(2, sr * 4, sr);
-    buildTone(ctx, ctx.destination, { ...tone, rain: false, marimba: { ...tone.marimba, on: false }, volumeDb: -6 }, 0, 4);
+    buildTone(ctx, ctx.destination, { ...tone, rain: false, marimba: { ...tone.marimba, on: false }, pad: { ...tone.pad, on: false }, volumeDb: -6 }, 0, 4);
     const bed = await ctx.startRendering();
     // analyse 2 s from the steady middle section
     const L = bed.getChannelData(0).slice(sr, sr * 3);

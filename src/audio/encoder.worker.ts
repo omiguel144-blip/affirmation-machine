@@ -64,7 +64,7 @@ self.onmessage = (e: MessageEvent<SessionPlan>) => {
     if (a > 0.89) { limited++; a = 0.89 + 0.1 * Math.tanh((a - 0.89) / 0.1); }
     return (v < 0 ? -a : a) * 32767;
   };
-  const mFirst = p.marimbaFirst, mLoop = p.marimbaLoop;
+  const mFirst = p.musicFirst, mLoop = p.musicLoop;
   const mFirstN = mFirst ? mFirst[0].length : 0, mLoopN = mLoop ? mLoop[0].length : 1;
 
   for (let start = 0; start < total; start += BLOCK) {

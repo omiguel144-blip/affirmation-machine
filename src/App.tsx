@@ -15,6 +15,8 @@ const MODE_LABELS: Record<Mode, string> = { gentle: "Gentle polish", singer: "Si
 interface Clip { id: string; buffer: AudioBuffer; url: string; trimmed: number }
 
 const LENGTHS = [5, 10, 20, 30, 60];
+type Music = "marimba" | "pad" | "none";
+const MUSIC_LABELS: Record<Music, string> = { marimba: "Marimba groove", pad: "Ambient pad", none: "None" };
 
 const TONES: { kind: ToneKind; label: string }[] = [
   { kind: "432", label: "432 Hz" },
@@ -30,6 +32,7 @@ export default function App() {
   const [clips, setClips] = useState<Clip[]>([]);
   const [minutes, setMinutes] = useState(60);
   const [gap, setGap] = useState(3);
+  const [repeatAfter, setRepeatAfter] = useState(false);
   const [progress, setProgress] = useState(0);
   const startedAt = useRef(0);
   const [url, setUrl] = useState<string | null>(null);
@@ -41,7 +44,18 @@ export default function App() {
   const [softness, setSoftness] = useState(0.6);
   const [reverb, setReverb] = useState(0.35);
   const [tone, setTone] = useState<ToneSettings>({ kind: "888", volumeDb: -22, carrier: 200, beat: 10, rain: false,
-    marimba: { on: true, pattern: "flow", bpm: 72, volumeDb: -18 } });
+    marimba: { on: true, pattern: "flow", bpm: 72, volumeDb: -18 }, pad: { on: false, volumeDb: -11 } });
+  const music: Music = tone.marimba.on ? "marimba" : tone.pad.on ? "pad" : "none";
+  const setMusic = (m: Music) => setTone({ ...tone, marimba: { ...tone.marimba, on: m === "marimba" }, pad: { ...tone.pad, on: m === "pad" } });
+
+  /** One-tap setups modelled on the two reference tracks. */
+  function applyPreset(p: "sleep" | "morning") {
+    setMode("gentle");
+    setTone({ ...tone, volumeDb: p === "sleep" ? -30 : -26, rain: false,
+      marimba: { ...tone.marimba, on: false }, pad: { on: true, volumeDb: p === "sleep" ? -13 : -10 } });
+    if (p === "sleep") { setSoftness(0.85); setReverb(0.5); setGap(6); setRepeatAfter(false); setMinutes(60); }
+    else { setSoftness(0.55); setReverb(0.35); setGap(2); setRepeatAfter(true); setMinutes(20); }
+  }
   const [name, setName] = useState("");
   const [library, setLibrary] = useState<Saved[]>([]);
   const [report, setReport] = useState<VerifyReport | null>(null);
@@ -78,7 +92,7 @@ export default function App() {
     const lock = await navigator.wakeLock?.request("screen").catch(() => null);
     try {
       const voices = clips.map((c) => (mode === "gentle" ? c.buffer : sing(c.buffer, scale, keyRoot(tone), mode, mode === "singer" && harmony)));
-      const plan = await planSession({ clips: voices, gap, reverb, softness, tone, minutes, title: name.trim() || "My Affirmations" });
+      const plan = await planSession({ clips: voices, gap, repeatAfter, reverb, softness, tone, minutes, title: name.trim() || "My Affirmations" });
       const result = await encodeSession(plan, setProgress);
       setReport(await verify(tone, result));
       if (url) URL.revokeObjectURL(url);
@@ -149,6 +163,11 @@ export default function App() {
       )}
 
       <section className="panel">
+        <label>Quick start</label>
+        <div className="seg">
+          <button onClick={() => applyPreset("sleep")}>☾ Sleep</button>
+          <button onClick={() => applyPreset("morning")}>☀ Morning · repeat after me</button>
+        </div>
         <label>Voice</label>
         <div className="seg">
           {(Object.keys(MODE_LABELS) as Mode[]).map((m) => (
@@ -174,7 +193,7 @@ export default function App() {
         )}
         {mode !== "gentle" && (
           <p className="hint">
-            Key of {noteName(keyRoot(tone))} {scale}, tuned to {keyRoot(tone).toFixed(1)} Hz — the same key as your {tone.marimba.on ? "marimba and " : ""}background tone.
+            Key of {noteName(keyRoot(tone))} {scale}, tuned to {keyRoot(tone).toFixed(1)} Hz — the same key as your {music !== "none" ? "music and " : ""}background tone.
           </p>
         )}
         <label>Softness <span>{softness < 0.3 ? "crisp" : softness < 0.7 ? "warm" : "velvet"}</span></label>
@@ -200,9 +219,19 @@ export default function App() {
         <label className="check">
           <input type="checkbox" checked={tone.rain} onChange={(e) => setTone({ ...tone, rain: e.target.checked })} /> Soft rain underneath
         </label>
-        <label className="check">
-          <input type="checkbox" checked={tone.marimba.on} onChange={(e) => setMarimba({ on: e.target.checked })} /> Marimba groove
-        </label>
+        <label>Music</label>
+        <div className="seg">
+          {(Object.keys(MUSIC_LABELS) as Music[]).map((m) => (
+            <button key={m} className={music === m ? "on" : ""} onClick={() => setMusic(m)}>{MUSIC_LABELS[m]}</button>
+          ))}
+        </div>
+        {music === "pad" && (
+          <>
+            <label>Pad volume <span>{tone.pad.volumeDb} dB</span></label>
+            <input type="range" min={-36} max={-6} step={1} value={tone.pad.volumeDb} onChange={(e) => setTone({ ...tone, pad: { ...tone.pad, volumeDb: +e.target.value } })} />
+            <p className="hint">Slow, beatless chords and soft chimes in your key — made for drifting off.</p>
+          </>
+        )}
         {tone.marimba.on && (
           <>
             <div className="seg small">
@@ -228,6 +257,10 @@ export default function App() {
         <label>Pause between affirmations <span>{tone.marimba.on ? "at least " : ""}{gap} s</span></label>
         <input type="range" min={1} max={10} step={0.5} value={gap} onChange={(e) => setGap(+e.target.value)} />
         {tone.marimba.on && <p className="hint">Each phrase starts on the first beat of a marimba bar, so pauses round up to the next bar.</p>}
+        <label className="check">
+          <input type="checkbox" checked={repeatAfter} onChange={(e) => setRepeatAfter(e.target.checked)} /> Repeat-after-me pauses
+        </label>
+        {repeatAfter && <p className="hint">Leaves time to say each phrase back before the next one.</p>}
         <label>Track title</label>
         <input className="text" placeholder="My Affirmations" value={name} onChange={(e) => setName(e.target.value)} />
       </section>
