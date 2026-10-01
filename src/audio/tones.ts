@@ -11,6 +11,19 @@ export interface ToneSettings {
   marimba: MarimbaSettings;
 }
 
+/** The musical key root shared by the marimba and autotune, derived from the chosen frequency. */
+export function keyRoot(s: ToneSettings): number {
+  const base = s.kind === "binaural" ? s.carrier : s.kind === "none" ? 261.63 : Number(s.kind);
+  return marimbaRoot(base);
+}
+
+const NOTE_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+/** Nearest note name for a frequency, e.g. 222 Hz → "A". */
+export function noteName(hz: number): string {
+  const midi = Math.round(69 + 12 * Math.log2(hz / 440));
+  return NOTE_NAMES[((midi % 12) + 12) % 12];
+}
+
 /** Builds the background bed into `dest`, running from t0 to t1. */
 export function buildTone(ctx: BaseAudioContext, dest: AudioNode, s: ToneSettings, t0: number, t1: number) {
   const master = new GainNode(ctx, { gain: 0 });
@@ -53,7 +66,6 @@ export function buildTone(ctx: BaseAudioContext, dest: AudioNode, s: ToneSetting
   }
 
   if (s.marimba.on) {
-    const base = s.kind === "binaural" ? s.carrier : s.kind === "none" ? 261.63 : Number(s.kind);
-    buildMarimba(ctx, dest, s.marimba, marimbaRoot(base), t0, t1);
+    buildMarimba(ctx, dest, s.marimba, keyRoot(s), t0, t1);
   }
 }

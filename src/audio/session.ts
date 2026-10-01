@@ -1,6 +1,6 @@
 import { voiceChain } from "./smooth";
-import { buildMarimba, marimbaLoopSeconds, marimbaRoot } from "./marimba";
-import type { ToneSettings } from "./tones";
+import { buildMarimba, marimbaLoopSeconds } from "./marimba";
+import { keyRoot, type ToneSettings } from "./tones";
 
 export const SR = 44100;
 
@@ -71,8 +71,7 @@ async function renderVoice(clips: AudioBuffer[], gap: number, reverb: number) {
 async function renderMarimba(tone: ToneSettings) {
   const L = Math.round(marimbaLoopSeconds(tone.marimba.bpm) * SR);
   const ctx = new OfflineAudioContext(2, 2 * L, SR);
-  const base = tone.kind === "binaural" ? tone.carrier : tone.kind === "none" ? 261.63 : Number(tone.kind);
-  buildMarimba(ctx, ctx.destination, tone.marimba, marimbaRoot(base), 0, (2 * L) / SR, false);
+  buildMarimba(ctx, ctx.destination, tone.marimba, keyRoot(tone), 0, (2 * L) / SR, false);
   const buf = await ctx.startRendering();
   return { first: slice(buf, 0, L), loop: slice(buf, L, 2 * L) };
 }

@@ -3,7 +3,7 @@ import { startRecording, decode, type Recorder } from "./audio/record";
 import { autotune, type Scale } from "./audio/smooth";
 import { trimSilence, toWav } from "./audio/trim";
 import { planSession, encodeSession } from "./audio/session";
-import { buildTone, type ToneKind, type ToneSettings } from "./audio/tones";
+import { buildTone, keyRoot, noteName, type ToneKind, type ToneSettings } from "./audio/tones";
 import type { MarimbaPattern } from "./audio/marimba";
 import { verify, type VerifyReport } from "./audio/verify";
 import { listSaved, saveItem, deleteItem, type Saved } from "./storage";
@@ -73,7 +73,7 @@ export default function App() {
     // keep phones from sleeping mid-build (a locked screen pauses the page)
     const lock = await navigator.wakeLock?.request("screen").catch(() => null);
     try {
-      const voices = clips.map((c) => (mode === "autotune" ? autotune(c.buffer, scale) : c.buffer));
+      const voices = clips.map((c) => (mode === "autotune" ? autotune(c.buffer, scale, keyRoot(tone)) : c.buffer));
       const plan = await planSession({ clips: voices, gap, reverb, tone, minutes, title: name.trim() || "My Affirmations" });
       const result = await encodeSession(plan, setProgress);
       setReport(await verify(tone, result));
@@ -159,6 +159,11 @@ export default function App() {
               <button key={s} className={scale === s ? "on" : ""} onClick={() => setScale(s)}>{s}</button>
             ))}
           </div>
+        )}
+        {mode === "autotune" && (
+          <p className="hint">
+            Key of {noteName(keyRoot(tone))} {scale}, tuned to {keyRoot(tone).toFixed(1)} Hz — the same key as your {tone.marimba.on ? "marimba and " : ""}background tone.
+          </p>
         )}
         <label>Reverb <span>{Math.round(reverb * 100)}%</span></label>
         <input type="range" min={0} max={0.8} step={0.05} value={reverb} onChange={(e) => setReverb(+e.target.value)} />

@@ -15,8 +15,9 @@ function toMono(buf: AudioBuffer): Float32Array {
   return out;
 }
 
-function snapRatio(freq: number, scale: Scale): number {
-  const midi = 69 + 12 * Math.log2(freq / 440);
+/** Ratio that moves `freq` onto the nearest note of `scale`, built on `rootHz`. */
+function snapRatio(freq: number, scale: Scale, rootHz: number): number {
+  const midi = 12 * Math.log2(freq / rootHz); // semitones above the key's root
   const base = Math.floor(midi / 12) * 12;
   let best = midi, dist = Infinity;
   for (const oct of [-12, 0, 12])
@@ -27,8 +28,13 @@ function snapRatio(freq: number, scale: Scale): number {
   return Math.pow(2, (best - midi) / 12);
 }
 
-/** Snap pitch to scale using pitchy detection + granular overlap-add pitch shifting. */
-export function autotune(buf: AudioBuffer, scale: Scale, strength = 1): AudioBuffer {
+/**
+ * Snap pitch to a scale on `rootHz`: pitchy detects the pitch of each 10 ms hop, then a
+ * pitch-synchronous overlap-add shifter moves it. Each grain is read at rate `r` (the pitch
+ * change), and its read position is kept within a whole number of pitch periods of real time,
+ * so neighbouring grains stay in phase and the shifted pitch actually holds.
+ */
+export function autotune(buf: AudioBuffer, scale: Scale, rootHz: number, strength = 1): AudioBuffer {
   const sr = buf.sampleRate;
   const x = toMono(buf);
   const grain = Math.round(sr * 0.04);
@@ -36,26 +42,37 @@ export function autotune(buf: AudioBuffer, scale: Scale, strength = 1): AudioBuf
   const det = PitchDetector.forFloat32Array(grain);
   const frame = new Float32Array(grain);
 
-  // per-hop shift ratio, smoothed
+  // per-hop shift ratio (smoothed) and source pitch period in samples (0 = unvoiced)
   const ratios: number[] = [];
+  const periods: number[] = [];
   let prev = 1;
   for (let p = 0; p + grain <= x.length; p += hop) {
     frame.set(x.subarray(p, p + grain));
     const [f, clarity] = det.findPitch(frame, sr);
-    let r = clarity > 0.85 && f > 70 && f < 1000 ? snapRatio(f, scale) : 1;
+    const voiced = clarity > 0.85 && f > 70 && f < 1000;
+    let r = voiced ? snapRatio(f, scale, rootHz) : 1;
     r = 1 + (r - 1) * strength;
-    prev = prev * 0.6 + r * 0.4;
+    prev = voiced ? prev * 0.6 + r * 0.4 : 1;
     ratios.push(prev);
+    periods.push(voiced ? sr / f : 0);
   }
 
   const y = new Float32Array(x.length);
   const norm = new Float32Array(x.length);
   const win = new Float32Array(grain).map((_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (grain - 1)));
+  let srcCenter = grain / 2;
   ratios.forEach((r, k) => {
     const start = k * hop;
     const center = start + grain / 2;
+    const T = periods[k];
+    if (k === 0 || !T) srcCenter = center;
+    else {
+      // advance by what the previous grain consumed, then snap back toward real time in whole periods
+      srcCenter += ratios[k - 1] * hop;
+      srcCenter += Math.round((center - srcCenter) / T) * T;
+    }
     for (let i = 0; i < grain; i++) {
-      const src = center + (i - grain / 2) * r;
+      const src = srcCenter + (i - grain / 2) * r;
       const i0 = Math.floor(src);
       if (i0 < 0 || i0 + 1 >= x.length) continue;
       const frac = src - i0;
