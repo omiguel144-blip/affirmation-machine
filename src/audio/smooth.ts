@@ -1,91 +1,4 @@
-import { PitchDetector } from "pitchy";
-
 export type Scale = "major" | "pentatonic";
-const SCALES: Record<Scale, number[]> = {
-  major: [0, 2, 4, 5, 7, 9, 11],
-  pentatonic: [0, 2, 4, 7, 9],
-};
-
-function toMono(buf: AudioBuffer): Float32Array {
-  const out = new Float32Array(buf.length);
-  for (let c = 0; c < buf.numberOfChannels; c++) {
-    const d = buf.getChannelData(c);
-    for (let i = 0; i < d.length; i++) out[i] += d[i] / buf.numberOfChannels;
-  }
-  return out;
-}
-
-/** Ratio that moves `freq` onto the nearest note of `scale`, built on `rootHz`. */
-function snapRatio(freq: number, scale: Scale, rootHz: number): number {
-  const midi = 12 * Math.log2(freq / rootHz); // semitones above the key's root
-  const base = Math.floor(midi / 12) * 12;
-  let best = midi, dist = Infinity;
-  for (const oct of [-12, 0, 12])
-    for (const s of SCALES[scale]) {
-      const n = base + oct + s;
-      if (Math.abs(n - midi) < dist) { dist = Math.abs(n - midi); best = n; }
-    }
-  return Math.pow(2, (best - midi) / 12);
-}
-
-/**
- * Snap pitch to a scale on `rootHz`: pitchy detects the pitch of each 10 ms hop, then a
- * pitch-synchronous overlap-add shifter moves it. Each grain is read at rate `r` (the pitch
- * change), and its read position is kept within a whole number of pitch periods of real time,
- * so neighbouring grains stay in phase and the shifted pitch actually holds.
- */
-export function autotune(buf: AudioBuffer, scale: Scale, rootHz: number, strength = 1): AudioBuffer {
-  const sr = buf.sampleRate;
-  const x = toMono(buf);
-  const grain = Math.round(sr * 0.04);
-  const hop = grain >> 2;
-  const det = PitchDetector.forFloat32Array(grain);
-  const frame = new Float32Array(grain);
-
-  // per-hop shift ratio (smoothed) and source pitch period in samples (0 = unvoiced)
-  const ratios: number[] = [];
-  const periods: number[] = [];
-  let prev = 1;
-  for (let p = 0; p + grain <= x.length; p += hop) {
-    frame.set(x.subarray(p, p + grain));
-    const [f, clarity] = det.findPitch(frame, sr);
-    const voiced = clarity > 0.85 && f > 70 && f < 1000;
-    let r = voiced ? snapRatio(f, scale, rootHz) : 1;
-    r = 1 + (r - 1) * strength;
-    prev = voiced ? prev * 0.6 + r * 0.4 : 1;
-    ratios.push(prev);
-    periods.push(voiced ? sr / f : 0);
-  }
-
-  const y = new Float32Array(x.length);
-  const norm = new Float32Array(x.length);
-  const win = new Float32Array(grain).map((_, i) => 0.5 - 0.5 * Math.cos((2 * Math.PI * i) / (grain - 1)));
-  let srcCenter = grain / 2;
-  ratios.forEach((r, k) => {
-    const start = k * hop;
-    const center = start + grain / 2;
-    const T = periods[k];
-    if (k === 0 || !T) srcCenter = center;
-    else {
-      // advance by what the previous grain consumed, then snap back toward real time in whole periods
-      srcCenter += ratios[k - 1] * hop;
-      srcCenter += Math.round((center - srcCenter) / T) * T;
-    }
-    for (let i = 0; i < grain; i++) {
-      const src = srcCenter + (i - grain / 2) * r;
-      const i0 = Math.floor(src);
-      if (i0 < 0 || i0 + 1 >= x.length) continue;
-      const frac = src - i0;
-      y[start + i] += (x[i0] * (1 - frac) + x[i0 + 1] * frac) * win[i];
-      norm[start + i] += win[i];
-    }
-  });
-  for (let i = 0; i < y.length; i++) y[i] = norm[i] > 1e-3 ? y[i] / norm[i] : x[i];
-
-  const out = new AudioBuffer({ length: y.length, sampleRate: sr, numberOfChannels: 1 });
-  out.copyToChannel(y, 0);
-  return out;
-}
 
 export function makeImpulse(ctx: BaseAudioContext, seconds = 2.5, decay = 3): AudioBuffer {
   const len = Math.round(ctx.sampleRate * seconds);
@@ -97,20 +10,34 @@ export function makeImpulse(ctx: BaseAudioContext, seconds = 2.5, decay = 3): Au
   return ir;
 }
 
-/** Gentle polish chain: high-pass, warmth, compression, reverb. Returns output node. */
-export function voiceChain(ctx: BaseAudioContext, src: AudioNode, reverbMix: number): AudioNode {
-  const hp = new BiquadFilterNode(ctx, { type: "highpass", frequency: 80 });
-  const warm = new BiquadFilterNode(ctx, { type: "lowshelf", frequency: 250, gain: 3 });
-  const deEss = new BiquadFilterNode(ctx, { type: "peaking", frequency: 6500, Q: 1.5, gain: -4 });
-  const comp = new DynamicsCompressorNode(ctx, { threshold: -24, ratio: 4, attack: 0.005, release: 0.2, knee: 10 });
-  const makeup = new GainNode(ctx, { gain: 1.6 });
-  src.connect(hp).connect(warm).connect(deEss).connect(comp).connect(makeup);
+/**
+ * Voice polish chain, tuned to sound soft and intimate rather than bright.
+ * `softness` (0–1) controls how much of the harsh 3 kHz "phone mic" edge, sibilance
+ * and top-end air is taken away.
+ */
+export function voiceChain(ctx: BaseAudioContext, src: AudioNode, reverbMix: number, softness = 0.6): AudioNode {
+  const sf = (type: BiquadFilterType, frequency: number, gain = 0, Q = 0.8) => new BiquadFilterNode(ctx, { type, frequency, gain, Q });
+  const chain: AudioNode[] = [
+    sf("highpass", 90),
+    sf("lowshelf", 220, 2.5),                       // warmth
+    sf("peaking", 3000, -(2 + 5 * softness), 0.9),  // the harsh "edge"
+    sf("peaking", 7000, -(3 + 5 * softness), 2),    // sibilance
+    sf("highshelf", 9000, -(2 + 6 * softness)),     // air / hiss
+    sf("lowpass", 16000 - 8000 * softness),
+    // gentle, slow compression: evens out without squashing
+    new DynamicsCompressorNode(ctx, { threshold: -22, ratio: 2.5, attack: 0.02, release: 0.3, knee: 12 }),
+    new GainNode(ctx, { gain: 1.3 }),
+  ];
+  let node: AudioNode = src;
+  for (const n of chain) node = node.connect(n);
 
   const out = new GainNode(ctx);
-  const dry = new GainNode(ctx, { gain: 1 - reverbMix * 0.5 });
-  const wet = new GainNode(ctx, { gain: reverbMix });
-  const conv = new ConvolverNode(ctx, { buffer: makeImpulse(ctx) });
-  makeup.connect(dry).connect(out);
-  makeup.connect(conv).connect(wet).connect(out);
+  const dry = new GainNode(ctx, { gain: 1 - reverbMix * 0.4 });
+  const wet = new GainNode(ctx, { gain: reverbMix * 1.2 });
+  // dark, slightly pre-delayed hall so the echo blooms behind the voice instead of hissing
+  const pre = new DelayNode(ctx, { delayTime: 0.03 });
+  const conv = new ConvolverNode(ctx, { buffer: makeImpulse(ctx, 3.2, 2.5) });
+  node.connect(dry).connect(out);
+  node.connect(pre).connect(conv).connect(sf("lowpass", 4500)).connect(sf("highpass", 200)).connect(wet).connect(out);
   return out;
 }

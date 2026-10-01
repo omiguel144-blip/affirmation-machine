@@ -4,7 +4,9 @@ export interface Recorder {
 
 export async function startRecording(): Promise<Recorder> {
   const stream = await navigator.mediaDevices.getUserMedia({
-    audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    // Phone "call" processing (echo cancelling, noise suppression, auto gain) makes voices
+    // thin and harsh, so record the raw mic like a music app does.
+    audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false },
   });
   const rec = new MediaRecorder(stream);
   const chunks: Blob[] = [];

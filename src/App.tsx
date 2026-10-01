@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { startRecording, decode, type Recorder } from "./audio/record";
-import { autotune, type Scale } from "./audio/smooth";
+import type { Scale } from "./audio/smooth";
+import { sing } from "./audio/singer";
 import { trimSilence, toWav } from "./audio/trim";
 import { planSession, encodeSession } from "./audio/session";
 import { buildTone, keyRoot, noteName, type ToneKind, type ToneSettings } from "./audio/tones";
@@ -9,7 +10,8 @@ import { verify, type VerifyReport } from "./audio/verify";
 import { listSaved, saveItem, deleteItem, type Saved } from "./storage";
 
 type Phase = "idle" | "recording" | "processing" | "ready";
-type Mode = "gentle" | "autotune";
+type Mode = "gentle" | "singer" | "hard";
+const MODE_LABELS: Record<Mode, string> = { gentle: "Gentle polish", singer: "Singer", hard: "Hard tune" };
 interface Clip { id: string; buffer: AudioBuffer; url: string; trimmed: number }
 
 const LENGTHS = [5, 10, 20, 30, 60];
@@ -34,7 +36,9 @@ export default function App() {
   const [blob, setBlob] = useState<Blob | null>(null);
   const [error, setError] = useState("");
   const [mode, setMode] = useState<Mode>("gentle");
-  const [scale, setScale] = useState<Scale>("major");
+  const [scale, setScale] = useState<Scale>("pentatonic");
+  const [harmony, setHarmony] = useState(true);
+  const [softness, setSoftness] = useState(0.6);
   const [reverb, setReverb] = useState(0.35);
   const [tone, setTone] = useState<ToneSettings>({ kind: "888", volumeDb: -22, carrier: 200, beat: 10, rain: false,
     marimba: { on: true, pattern: "flow", bpm: 72, volumeDb: -18 } });
@@ -73,8 +77,8 @@ export default function App() {
     // keep phones from sleeping mid-build (a locked screen pauses the page)
     const lock = await navigator.wakeLock?.request("screen").catch(() => null);
     try {
-      const voices = clips.map((c) => (mode === "autotune" ? autotune(c.buffer, scale, keyRoot(tone)) : c.buffer));
-      const plan = await planSession({ clips: voices, gap, reverb, tone, minutes, title: name.trim() || "My Affirmations" });
+      const voices = clips.map((c) => (mode === "gentle" ? c.buffer : sing(c.buffer, scale, keyRoot(tone), mode, mode === "singer" && harmony)));
+      const plan = await planSession({ clips: voices, gap, reverb, softness, tone, minutes, title: name.trim() || "My Affirmations" });
       const result = await encodeSession(plan, setProgress);
       setReport(await verify(tone, result));
       if (url) URL.revokeObjectURL(url);
@@ -147,24 +151,34 @@ export default function App() {
       <section className="panel">
         <label>Voice</label>
         <div className="seg">
-          {(["gentle", "autotune"] as Mode[]).map((m) => (
-            <button key={m} className={mode === m ? "on" : ""} onClick={() => setMode(m)}>
-              {m === "gentle" ? "Gentle polish" : "Autotune"}
-            </button>
+          {(Object.keys(MODE_LABELS) as Mode[]).map((m) => (
+            <button key={m} className={mode === m ? "on" : ""} onClick={() => setMode(m)}>{MODE_LABELS[m]}</button>
           ))}
         </div>
-        {mode === "autotune" && (
+        <p className="hint">
+          {mode === "gentle" && "Your natural voice, softened and warmed."}
+          {mode === "singer" && "Holds each syllable on a note, glides between them with a soft vibrato — like a calm singer."}
+          {mode === "hard" && "Classic snappy autotune effect. Fun, but more robotic."}
+        </p>
+        {mode !== "gentle" && (
           <div className="seg small">
             {(["major", "pentatonic"] as Scale[]).map((s) => (
               <button key={s} className={scale === s ? "on" : ""} onClick={() => setScale(s)}>{s}</button>
             ))}
           </div>
         )}
-        {mode === "autotune" && (
+        {mode === "singer" && (
+          <label className="check">
+            <input type="checkbox" checked={harmony} onChange={(e) => setHarmony(e.target.checked)} /> Soft harmony voice
+          </label>
+        )}
+        {mode !== "gentle" && (
           <p className="hint">
             Key of {noteName(keyRoot(tone))} {scale}, tuned to {keyRoot(tone).toFixed(1)} Hz — the same key as your {tone.marimba.on ? "marimba and " : ""}background tone.
           </p>
         )}
+        <label>Softness <span>{softness < 0.3 ? "crisp" : softness < 0.7 ? "warm" : "velvet"}</span></label>
+        <input type="range" min={0} max={1} step={0.05} value={softness} onChange={(e) => setSoftness(+e.target.value)} />
         <label>Reverb <span>{Math.round(reverb * 100)}%</span></label>
         <input type="range" min={0} max={0.8} step={0.05} value={reverb} onChange={(e) => setReverb(+e.target.value)} />
 

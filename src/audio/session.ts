@@ -42,13 +42,13 @@ function peakNormalize(clip: AudioBuffer, target = 0.7): AudioBuffer {
 }
 
 /** Renders two passes of the affirmation set through the voice chain and splits it into seamless pieces. */
-async function renderVoice(clips: AudioBuffer[], gap: number, reverb: number) {
+async function renderVoice(clips: AudioBuffer[], gap: number, reverb: number, softness: number) {
   const cycle = clips.reduce((t, c) => t + gap + c.duration, 0);
   const C = Math.round(cycle * SR);
   const tail = Math.round(3 * SR);
   const ctx = new OfflineAudioContext(2, 2 * C + tail, SR);
   const bus = new GainNode(ctx);
-  voiceChain(ctx, bus, reverb).connect(ctx.destination);
+  voiceChain(ctx, bus, reverb, softness).connect(ctx.destination);
   for (let pass = 0; pass < 2; pass++) {
     let t = pass * (C / SR);
     for (const clip of clips) {
@@ -60,10 +60,10 @@ async function renderVoice(clips: AudioBuffer[], gap: number, reverb: number) {
     }
   }
   const buf = await ctx.startRendering();
-  // normalize the voice to -3 dBFS
+  // normalize the voice to about -5 dBFS so it sits inside the music rather than on top
   let peak = 0;
   for (let c = 0; c < 2; c++) for (const v of buf.getChannelData(c)) peak = Math.max(peak, Math.abs(v));
-  const g = peak ? 0.7 / peak : 1;
+  const g = peak ? 0.56 / peak : 1;
   for (let c = 0; c < 2; c++) { const d = buf.getChannelData(c); for (let i = 0; i < d.length; i++) d[i] *= g; }
   return { first: slice(buf, 0, C), loop: slice(buf, C, 2 * C), tail: slice(buf, 2 * C, 2 * C + tail), cycleSec: cycle };
 }
@@ -80,11 +80,12 @@ export async function planSession(opts: {
   clips: AudioBuffer[];
   gap: number;
   reverb: number;
+  softness: number;
   tone: ToneSettings;
   minutes: number;
   title: string;
 }): Promise<SessionPlan> {
-  const voice = await renderVoice(opts.clips, opts.gap, opts.reverb);
+  const voice = await renderVoice(opts.clips, opts.gap, opts.reverb, opts.softness);
   const mar = opts.tone.marimba.on ? await renderMarimba(opts.tone) : null;
   const t = opts.tone;
   const gain = Math.pow(10, t.volumeDb / 20);

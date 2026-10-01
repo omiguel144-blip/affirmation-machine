@@ -25,9 +25,9 @@ button:disabled { opacity: .4; cursor: default; }
   display: flex; flex-direction: column; gap: 10px; backdrop-filter: blur(10px); }
 label { font-size: .85rem; color: var(--muted); display: flex; justify-content: space-between; margin-top: 6px; }
 label.check { justify-content: flex-start; gap: 8px; color: var(--text); }
-.seg { display: flex; gap: 6px; }
+.seg { display: flex; flex-wrap: wrap; gap: 6px; }
 .seg.wrap { flex-wrap: wrap; }
-.seg button { flex: 1; text-transform: capitalize; white-space: nowrap; }
+.seg button { flex: 1 1 auto; text-transform: capitalize; white-space: nowrap; padding: 8px 12px; }
 .seg.small button { font-size: .85rem; padding: 6px 12px; }
 .seg .on { background: var(--accent); color: #1a1033; border-color: var(--accent); }
 input[type=range] { width: 100%; accent-color: var(--accent); }
