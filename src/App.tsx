@@ -69,6 +69,8 @@ export default function App() {
     setProgress(0);
     setError("");
     startedAt.current = Date.now();
+    // keep phones from sleeping mid-build (a locked screen pauses the page)
+    const lock = await navigator.wakeLock?.request("screen").catch(() => null);
     try {
       const voices = clips.map((c) => (mode === "autotune" ? autotune(c.buffer, scale) : c.buffer));
       const plan = await planSession({ clips: voices, gap, reverb, tone, minutes, title: name.trim() || "My Affirmations" });
@@ -80,6 +82,7 @@ export default function App() {
     } catch (e) {
       setError(`Something went wrong building the MP3: ${e instanceof Error ? e.message : e}`);
     }
+    lock?.release();
     setPhase("ready");
   }
 
@@ -211,7 +214,7 @@ export default function App() {
       {phase === "processing" && (
         <>
           <div className="bar"><div style={{ width: `${progress * 100}%` }} /></div>
-          <p className="hint">{eta(progress, startedAt.current)} · keep this tab open</p>
+          <p className="hint">{eta(progress, startedAt.current)} · keep this tab open and your screen on</p>
         </>
       )}
 
