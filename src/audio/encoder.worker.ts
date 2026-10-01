@@ -72,13 +72,16 @@ self.onmessage = (e: MessageEvent<SessionPlan>) => {
     for (let j = 0; j < n; j++) {
       const i = start + j;
       let l = 0, r = 0;
-      // affirmations
+      // affirmations (+ where we are in the rendered voice, for ducking the background)
+      let duck = 1;
       if (i >= introN && i < voiceEnd) {
         const k = i - introN;
-        if (k < cycleN) { l += p.voiceFirst[0][k]; r += p.voiceFirst[1][k]; }
-        else { const m = k % cycleN; l += p.voiceLoop[0][m]; r += p.voiceLoop[1][m]; }
+        if (k < cycleN) { l += p.voiceFirst[0][k]; r += p.voiceFirst[1][k]; duck = p.duck[(k / 441) | 0]; }
+        else { const m = k % cycleN; l += p.voiceLoop[0][m]; r += p.voiceLoop[1][m]; duck = p.duck[((cycleN + m) / 441) | 0]; }
       } else if (i >= voiceEnd && i - voiceEnd < tail[0].length) {
-        l += tail[0][i - voiceEnd]; r += tail[1][i - voiceEnd];
+        const n = i - voiceEnd;
+        l += tail[0][n]; r += tail[1][n];
+        duck = p.duck[((2 * cycleN + n) / 441) | 0] ?? 1;
       }
       // background bed, with fade in/out
       const env = Math.min(1, i / fadeIn, (total - i) / fadeOut);
@@ -97,8 +100,8 @@ self.onmessage = (e: MessageEvent<SessionPlan>) => {
         lp += lpA * ((b0 + b1 + b2) * 0.5 - lp);
         bg_l += lp * p.rainGain; bg_r += lp * p.rainGain;
       }
-      l = l * Math.min(1, (total - i) / fadeOut) + bg_l * env;
-      r = r * Math.min(1, (total - i) / fadeOut) + bg_r * env;
+      l = l * Math.min(1, (total - i) / fadeOut) + bg_l * env * duck;
+      r = r * Math.min(1, (total - i) / fadeOut) + bg_r * env * duck;
       L16[j] = limit(l);
       R16[j] = limit(r);
     }

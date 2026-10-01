@@ -225,8 +225,9 @@ export default function App() {
             <button key={m} className={minutes === m ? "on" : ""} onClick={() => setMinutes(m)}>{m === 60 ? "1 hr" : `${m} min`}</button>
           ))}
         </div>
-        <label>Pause between affirmations <span>{gap} s</span></label>
+        <label>Pause between affirmations <span>{tone.marimba.on ? "at least " : ""}{gap} s</span></label>
         <input type="range" min={1} max={10} step={0.5} value={gap} onChange={(e) => setGap(+e.target.value)} />
+        {tone.marimba.on && <p className="hint">Each phrase starts on the first beat of a marimba bar, so pauses round up to the next bar.</p>}
         <label>Track title</label>
         <input className="text" placeholder="My Affirmations" value={name} onChange={(e) => setName(e.target.value)} />
       </section>
