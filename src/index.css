@@ -52,3 +52,6 @@ input.text { font: inherit; color: var(--text); background: transparent; border:
 .bar { width: 100%; height: 6px; border-radius: 3px; background: var(--panel); overflow: hidden; }
 .bar div { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .2s; }
 .verify p { margin: 4px 0; color: var(--muted); }
+.clipmain { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.clipmain audio { width: 100%; height: 36px; }
+.clipmain small { color: var(--muted); font-size: .75rem; padding-left: 12px; }

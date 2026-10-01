@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { startRecording, decode, type Recorder } from "./audio/record";
 import { autotune, type Scale } from "./audio/smooth";
+import { trimSilence, toWav } from "./audio/trim";
 import { planSession, encodeSession } from "./audio/session";
 import { buildTone, type ToneKind, type ToneSettings } from "./audio/tones";
 import type { MarimbaPattern } from "./audio/marimba";
@@ -9,7 +10,7 @@ import { listSaved, saveItem, deleteItem, type Saved } from "./storage";
 
 type Phase = "idle" | "recording" | "processing" | "ready";
 type Mode = "gentle" | "autotune";
-interface Clip { id: string; buffer: AudioBuffer; url: string }
+interface Clip { id: string; buffer: AudioBuffer; url: string; trimmed: number }
 
 const LENGTHS = [5, 10, 20, 30, 60];
 
@@ -50,8 +51,8 @@ export default function App() {
     setError("");
     if (phase === "recording") {
       const b = await rec.current!.stop();
-      const buffer = await decode(b);
-      setClips((c) => [...c, { id: crypto.randomUUID(), buffer, url: URL.createObjectURL(b) }]);
+      const { buffer, removedSec } = trimSilence(await decode(b));
+      setClips((c) => [...c, { id: crypto.randomUUID(), buffer, url: URL.createObjectURL(toWav(buffer)), trimmed: removedSec }]);
       setPhase("idle");
       return;
     }
@@ -132,7 +133,10 @@ export default function App() {
           {clips.map((c, i) => (
             <div key={c.id} className="clip">
               <span className="num">{i + 1}</span>
-              <audio src={c.url} controls />
+              <div className="clipmain">
+                <audio src={c.url} controls />
+                <small>{c.buffer.duration.toFixed(1)} s{c.trimmed >= 0.1 && ` · trimmed ${c.trimmed.toFixed(1)} s of silence`}</small>
+              </div>
               <button className="icon" disabled={i === 0} onClick={() => moveClip(i, -1)} aria-label="Move up">↑</button>
               <button className="icon" onClick={() => removeClip(c.id)} aria-label="Remove">✕</button>
             </div>
