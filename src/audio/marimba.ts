@@ -34,6 +34,9 @@ function strike(ctx: BaseAudioContext, dest: AudioNode, freq: number, t: number,
   }
 }
 
+/** Length of one seamless loop: 4 bars of 16 eighth-notes. */
+export const marimbaLoopSeconds = (bpm: number) => (64 * 60) / bpm / 2;
+
 export interface MarimbaSettings {
   on: boolean;
   pattern: MarimbaPattern;
@@ -41,14 +44,16 @@ export interface MarimbaSettings {
   volumeDb: number;
 }
 
-export function buildMarimba(ctx: BaseAudioContext, dest: AudioNode, m: MarimbaSettings, rootHz: number, t0: number, t1: number) {
+export function buildMarimba(ctx: BaseAudioContext, dest: AudioNode, m: MarimbaSettings, rootHz: number, t0: number, t1: number, fades = true) {
   const vol = Math.pow(10, m.volumeDb / 20);
-  const fade = Math.min(2, (t1 - t0) / 4);
-  const master = new GainNode(ctx, { gain: 0 });
-  master.gain.setValueAtTime(0, t0);
-  master.gain.linearRampToValueAtTime(vol, t0 + fade);
-  master.gain.setValueAtTime(vol, t1 - fade);
-  master.gain.linearRampToValueAtTime(0, t1);
+  const master = new GainNode(ctx, { gain: fades ? 0 : vol });
+  if (fades) {
+    const fade = Math.min(2, (t1 - t0) / 4);
+    master.gain.setValueAtTime(0, t0);
+    master.gain.linearRampToValueAtTime(vol, t0 + fade);
+    master.gain.setValueAtTime(vol, t1 - fade);
+    master.gain.linearRampToValueAtTime(0, t1);
+  }
   // soft room + warm low-pass so it sits behind the voice
   const lp = new BiquadFilterNode(ctx, { type: "lowpass", frequency: 4000 });
   const delay = new DelayNode(ctx, { delayTime: 60 / m.bpm * 0.75 });
@@ -61,7 +66,8 @@ export function buildMarimba(ctx: BaseAudioContext, dest: AudioNode, m: MarimbaS
   const seq = PATTERNS[m.pattern];
   let seed = 7;
   const rand = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-  for (let i = 0, t = t0; t < t1 - 1; i++, t += step) {
+  const end = fades ? t1 - 1 : t1 - 1e-6;
+  for (let i = 0, t = t0; t < end; i++, t = t0 + i * step) {
     const n = seq[i % seq.length];
     if (n === null) continue;
     const accent = i % 4 === 0 ? 1 : 0.7;

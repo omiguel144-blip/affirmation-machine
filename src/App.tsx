@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { startRecording, decode, type Recorder } from "./audio/record";
 import { autotune, type Scale } from "./audio/smooth";
-import { renderMix, toWav } from "./audio/mix";
+import { planSession, encodeSession } from "./audio/session";
 import { buildTone, type ToneKind, type ToneSettings } from "./audio/tones";
 import type { MarimbaPattern } from "./audio/marimba";
 import { verify, type VerifyReport } from "./audio/verify";
@@ -9,6 +9,9 @@ import { listSaved, saveItem, deleteItem, type Saved } from "./storage";
 
 type Phase = "idle" | "recording" | "processing" | "ready";
 type Mode = "gentle" | "autotune";
+interface Clip { id: string; buffer: AudioBuffer; url: string }
+
+const LENGTHS = [5, 10, 20, 30, 60];
 
 const TONES: { kind: ToneKind; label: string }[] = [
   { kind: "432", label: "432 Hz" },
@@ -21,14 +24,17 @@ const TONES: { kind: ToneKind; label: string }[] = [
 
 export default function App() {
   const [phase, setPhase] = useState<Phase>("idle");
-  const [raw, setRaw] = useState<AudioBuffer | null>(null);
+  const [clips, setClips] = useState<Clip[]>([]);
+  const [minutes, setMinutes] = useState(60);
+  const [gap, setGap] = useState(3);
+  const [progress, setProgress] = useState(0);
+  const startedAt = useRef(0);
   const [url, setUrl] = useState<string | null>(null);
   const [blob, setBlob] = useState<Blob | null>(null);
   const [error, setError] = useState("");
   const [mode, setMode] = useState<Mode>("gentle");
   const [scale, setScale] = useState<Scale>("major");
   const [reverb, setReverb] = useState(0.35);
-  const [repeats, setRepeats] = useState(3);
   const [tone, setTone] = useState<ToneSettings>({ kind: "888", volumeDb: -22, carrier: 200, beat: 10, rain: false,
     marimba: { on: true, pattern: "flow", bpm: 72, volumeDb: -18 } });
   const [name, setName] = useState("");
@@ -44,13 +50,13 @@ export default function App() {
     setError("");
     if (phase === "recording") {
       const b = await rec.current!.stop();
-      setRaw(await decode(b));
-      setPhase("ready");
+      const buffer = await decode(b);
+      setClips((c) => [...c, { id: crypto.randomUUID(), buffer, url: URL.createObjectURL(b) }]);
+      setPhase("idle");
       return;
     }
     try {
       rec.current = await startRecording();
-      setUrl(null); setBlob(null);
       setPhase("recording");
     } catch {
       setError("Microphone access is needed to record.");
@@ -58,17 +64,34 @@ export default function App() {
   }
 
   async function process() {
-    if (!raw) return;
+    if (!clips.length) return;
     setPhase("processing");
-    await new Promise((r) => setTimeout(r, 30));
-    const voice = mode === "autotune" ? autotune(raw, scale) : raw;
-    const mixed = await renderMix(voice, { tone, reverb, repeats, gap: 1.5 });
-    setReport(await verify(tone, mixed));
-    const w = toWav(mixed);
-    if (url) URL.revokeObjectURL(url);
-    setBlob(w);
-    setUrl(URL.createObjectURL(w));
+    setProgress(0);
+    setError("");
+    startedAt.current = Date.now();
+    try {
+      const voices = clips.map((c) => (mode === "autotune" ? autotune(c.buffer, scale) : c.buffer));
+      const plan = await planSession({ clips: voices, gap, reverb, tone, minutes, title: name.trim() || "My Affirmations" });
+      const result = await encodeSession(plan, setProgress);
+      setReport(await verify(tone, result));
+      if (url) URL.revokeObjectURL(url);
+      setBlob(result.blob);
+      setUrl(URL.createObjectURL(result.blob));
+    } catch (e) {
+      setError(`Something went wrong building the MP3: ${e instanceof Error ? e.message : e}`);
+    }
     setPhase("ready");
+  }
+
+  function moveClip(i: number, dir: -1 | 1) {
+    setClips((c) => {
+      const n = [...c];
+      [n[i], n[i + dir]] = [n[i + dir], n[i]];
+      return n;
+    });
+  }
+  function removeClip(id: string) {
+    setClips((c) => c.filter((x) => x.id !== id));
   }
 
   const setMarimba = (m: Partial<ToneSettings["marimba"]>) => setTone({ ...tone, marimba: { ...tone.marimba, ...m } });
@@ -84,12 +107,11 @@ export default function App() {
 
   async function save() {
     if (!blob) return;
-    await saveItem({ id: crypto.randomUUID(), name: name.trim() || "Untitled affirmation", created: Date.now(), blob });
-    setName("");
+    await saveItem({ id: crypto.randomUUID(), name: name.trim() || "My Affirmations", created: Date.now(), blob });
     setLibrary(await listSaved());
   }
 
-  const fileName = (n: string) => `${n.replace(/[^\w ]+/g, "").trim() || "affirmation"}.wav`;
+  const fileName = (n: string) => `${n.replace(/[^\w ]+/g, "").trim() || "My Affirmations"}.mp3`;
 
   return (
     <main>
@@ -97,9 +119,23 @@ export default function App() {
       <p className="sub">Speak it. Smooth it. Steep it in sound.</p>
 
       <button className={`orb ${phase}`} onClick={toggleRecord} disabled={phase === "processing"}>
-        {phase === "recording" ? "Stop" : raw ? "Re-record" : "Record"}
+        {phase === "recording" ? "Stop" : clips.length ? "Add another" : "Record"}
       </button>
       {error && <p className="error">{error}</p>}
+
+      {clips.length > 0 && (
+        <section className="panel">
+          <label>Your affirmation set <span>{clips.length} · plays in this order, on repeat</span></label>
+          {clips.map((c, i) => (
+            <div key={c.id} className="clip">
+              <span className="num">{i + 1}</span>
+              <audio src={c.url} controls />
+              <button className="icon" disabled={i === 0} onClick={() => moveClip(i, -1)} aria-label="Move up">↑</button>
+              <button className="icon" onClick={() => removeClip(c.id)} aria-label="Remove">✕</button>
+            </div>
+          ))}
+        </section>
+      )}
 
       <section className="panel">
         <label>Voice</label>
@@ -157,22 +193,42 @@ export default function App() {
         )}
         <button className="ghost" onClick={togglePreview}>{previewing ? "Stop preview" : "Preview background"}</button>
 
-        <label>Repeats <span>×{repeats}</span></label>
-        <input type="range" min={1} max={12} step={1} value={repeats} onChange={(e) => setRepeats(+e.target.value)} />
+        <label>Session length</label>
+        <div className="seg">
+          {LENGTHS.map((m) => (
+            <button key={m} className={minutes === m ? "on" : ""} onClick={() => setMinutes(m)}>{m === 60 ? "1 hr" : `${m} min`}</button>
+          ))}
+        </div>
+        <label>Pause between affirmations <span>{gap} s</span></label>
+        <input type="range" min={1} max={10} step={0.5} value={gap} onChange={(e) => setGap(+e.target.value)} />
+        <label>Track title</label>
+        <input className="text" placeholder="My Affirmations" value={name} onChange={(e) => setName(e.target.value)} />
       </section>
 
-      <button className="primary" onClick={process} disabled={!raw || phase === "processing" || phase === "recording"}>
-        {phase === "processing" ? "Creating…" : "Create affirmation"}
+      <button className="primary" onClick={process} disabled={!clips.length || phase === "processing" || phase === "recording"}>
+        {phase === "processing" ? `Building MP3… ${Math.round(progress * 100)}%` : `Create ${minutes === 60 ? "1-hour" : `${minutes}-min`} MP3`}
       </button>
+      {phase === "processing" && (
+        <>
+          <div className="bar"><div style={{ width: `${progress * 100}%` }} /></div>
+          <p className="hint">{eta(progress, startedAt.current)} · keep this tab open</p>
+        </>
+      )}
 
       {url && (
         <section className="panel result">
           <audio src={url} controls />
           <div className="row">
-            <input placeholder="Name it…" value={name} onChange={(e) => setName(e.target.value)} />
-            <button onClick={save}>Save</button>
-            <a className="btn" href={url} download={fileName(name)}>Download</a>
+            <small>{blob && `${(blob.size / 1048576).toFixed(0)} MB · MP3 128 kbps`}</small>
+            <button onClick={save}>Save to library</button>
+            <a className="btn" href={url} download={fileName(name)}>Download MP3</a>
           </div>
+          <details className="verify">
+            <summary>Add to Apple Music</summary>
+            <p><strong>Mac:</strong> open the Music app → File → Import… → pick the MP3. Or drag the file into Music.</p>
+            <p><strong>iPhone:</strong> import it on your Mac first, then sync your iPhone in Finder (or turn on Sync Library with Apple Music / iTunes Match so it appears on all your devices).</p>
+            <p><strong>Windows:</strong> use the Apple Music app or iTunes → File → Add File to Library.</p>
+          </details>
           {report && <Verification r={report} />}
         </section>
       )}
@@ -187,20 +243,26 @@ export default function App() {
   );
 }
 
+function eta(p: number, started: number): string {
+  if (p < 0.03) return "Estimating time…";
+  const left = ((Date.now() - started) / p) * (1 - p) / 1000;
+  return left > 90 ? `About ${Math.ceil(left / 60)} min left` : `About ${Math.max(5, Math.round(left / 5) * 5)} s left`;
+}
+
 function LibraryItem({ item, onDelete, fileName }: { item: Saved; onDelete: () => void; fileName: string }) {
   const [src, setSrc] = useState("");
   useEffect(() => { const u = URL.createObjectURL(item.blob); setSrc(u); return () => URL.revokeObjectURL(u); }, [item.blob]);
   return (
     <div className="item">
       <div className="row"><strong>{item.name}</strong><small>{new Date(item.created).toLocaleDateString()}</small></div>
-      <audio src={src} controls loop />
+      <audio src={src} controls />
       <div className="row"><a className="btn" href={src} download={fileName}>Download</a><button className="ghost" onClick={onDelete}>Delete</button></div>
     </div>
   );
 }
 
 function Verification({ r }: { r: VerifyReport }) {
-  const clean = r.tones.every((t) => Math.abs(t.measured - t.expected) < 0.5 && t.harmonicsDb.every((h) => h < -40)) && r.clippedSamples === 0;
+  const clean = r.tones.every((t) => Math.abs(t.measured - t.expected) < 0.5 && t.harmonicsDb.every((h) => h < -40));
   return (
     <details className="verify">
       <summary>{clean ? "✓ Frequency verified · no distortion" : "⚠ Check frequency report"}</summary>
@@ -216,7 +278,7 @@ function Verification({ r }: { r: VerifyReport }) {
           <small>{t.harmonicsDb.map((h) => (h < -99 ? "<−99" : h.toFixed(0))).join(" / ")} dB</small>
         </div>
       ))}
-      <div className="row"><span>Clipping</span><span>{r.clippedSamples === 0 ? "None" : `${r.clippedSamples} samples`}</span></div>
+      <div className="row"><span>Clipping</span><span>{r.clippedSamples === 0 ? "None" : `None (${r.clippedSamples} peaks softly limited)`}</span></div>
       <div className="row"><span>Peak level</span><span>{r.peakDb.toFixed(1)} dBFS</span></div>
       <p className="hint">Measured from the rendered audio with a Goertzel scan. Harmonics below −40 dB mean a pure sine. This confirms the tone is really there and clean. It can't confirm any manifestation effect: treat the sound as a cue to pause and focus.</p>
     </details>

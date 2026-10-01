@@ -44,3 +44,11 @@ audio { width: 100%; }
 .verify summary { cursor: pointer; color: var(--accent2); margin-bottom: 6px; }
 .verify .row { margin: 4px 0; }
 .verify small { color: var(--muted); }
+.clip { display: flex; align-items: center; gap: 8px; }
+.clip audio { flex: 1; min-width: 0; height: 36px; }
+.clip .num { color: var(--muted); width: 1.2em; text-align: center; }
+.icon { padding: 6px 10px; }
+input.text { font: inherit; color: var(--text); background: transparent; border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; }
+.bar { width: 100%; height: 6px; border-radius: 3px; background: var(--panel); overflow: hidden; }
+.bar div { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); transition: width .2s; }
+.verify p { margin: 4px 0; color: var(--muted); }

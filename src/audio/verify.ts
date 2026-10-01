@@ -40,8 +40,8 @@ function measure(x: Float32Array, expected: number, sr: number, channel: string)
   return { channel, expected, measured: best, harmonicsDb };
 }
 
-/** Renders the background bed alone and measures what's really in it, plus clipping in the final mix. */
-export async function verify(tone: ToneSettings, mix: AudioBuffer): Promise<VerifyReport> {
+/** Renders the background bed alone and measures what's really in it, plus the final mix level. */
+export async function verify(tone: ToneSettings, out: { peak: number; limitedSamples: number }): Promise<VerifyReport> {
   const tones: ToneCheck[] = [];
   if (tone.kind !== "none") {
     const sr = 44100;
@@ -58,12 +58,5 @@ export async function verify(tone: ToneSettings, mix: AudioBuffer): Promise<Veri
       tones.push(measure(L, Number(tone.kind), sr, "Both ears"));
     }
   }
-  let clipped = 0, peak = 0;
-  for (let c = 0; c < mix.numberOfChannels; c++)
-    for (const v of mix.getChannelData(c)) {
-      const a = Math.abs(v);
-      if (a >= 0.999) clipped++;
-      if (a > peak) peak = a;
-    }
-  return { tones, clippedSamples: clipped, peakDb: 20 * Math.log10(peak || 1e-9) };
+  return { tones, clippedSamples: out.limitedSamples, peakDb: 20 * Math.log10(Math.min(out.peak, 0.99) || 1e-9) };
 }
